@@ -1,0 +1,87 @@
+plugins {
+    id 'java'
+    id 'application'
+}
+
+application {
+    mainClass = 'com.takenawa.mfpackager.MFPackager'
+}
+
+group = 'com.takenawa.mfpackager'
+version = '1.0.0'
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    testImplementation platform('org.junit:junit-bom:6.0.0')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    implementation 'com.google.code.gson:gson:2.13.2'
+}
+
+test {
+    useJUnitPlatform()
+}
+
+jar {
+    manifest {
+        attributes(
+                'Main-Class': 'com.takenawa.mfpackager.MFPackager'
+        )
+    }
+
+    from {
+        configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) }
+    }
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+
+tasks.register('packageExe', Exec) {
+    dependsOn clean, jar
+    group = 'distribution'
+
+    def buildDir = layout.buildDirectory.get().asFile
+
+    doFirst {
+        delete "${buildDir}/jpackage"
+        mkdir "${buildDir}/jpackage"
+    }
+
+    commandLine 'jpackage',
+            '--type', 'app-image',
+            '--name', 'MFPackager',
+            '--input', "${buildDir}/libs",
+            '--main-jar', "${project.name}-${version}.jar",
+            '--main-class', 'com.takenawa.mfpackager.MFPackager',
+            '--dest', "${buildDir}/jpackage",
+            '--icon', "${projectDir}/icon.ico",
+            '--vendor', 'Seikai-Takenawa',
+            '--copyright', 'MIT License'
+}
+
+tasks.register('packageInstaller', Exec) {
+    dependsOn clean, jar
+    group = 'distribution'
+
+    def buildDir = layout.buildDirectory.get().asFile
+
+    doFirst {
+        delete "${buildDir}/jpackage"
+        mkdir "${buildDir}/jpackage"
+    }
+
+    commandLine 'jpackage',
+            '--type', 'exe',
+            '--name', 'MFPackager',
+            '--input', "${buildDir}/libs",
+            '--main-jar', "${project.name}-${version}.jar",
+            '--main-class', 'com.takenawa.mfpackager.MFPackager',
+            '--dest', "${buildDir}/jpackage",
+            '--icon', "${projectDir}/icon.ico",
+            '--vendor', 'YourName',
+            '--copyright', 'MIT License',
+            '--win-dir-chooser',
+            '--win-shortcut'
+}
