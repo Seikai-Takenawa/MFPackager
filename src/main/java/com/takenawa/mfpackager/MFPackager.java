@@ -9,14 +9,10 @@ import java.awt.*;
 import java.io.File;
 import java.io.IOException;
 import java.util.Objects;
+import java.util.List;
 
 public class MFPackager extends JFrame {
     private static MFPackager instance;
-    private static boolean dirCreated;
-    private static boolean infoCollected;
-    private static boolean soundsCopied;
-    private static boolean metaCreated;
-    private static boolean jsonCreated;
     private static final String[] VERSIONS = {"1.21.5", "1.21.6", "1.21.7", "1.21.8", "1.21.10", "1.21.11"};
 
     private JTextField assetsField, targetField;
@@ -24,7 +20,6 @@ public class MFPackager extends JFrame {
     private JComboBox<String> versionComboBox;
     private JTextArea statusArea;
     private JButton startButton, cancelButton;
-    private Thread packingThread;
 
     private volatile boolean cancelRequested = false;
 
@@ -33,12 +28,6 @@ public class MFPackager extends JFrame {
             instance = new MFPackager();
         }
         return instance;
-    }
-
-    public static void interruptPackingThread() {
-        if (instance != null && instance.packingThread != null) {
-            instance.packingThread.interrupt();
-        }
     }
 
     private MFPackager() {
@@ -179,10 +168,6 @@ public class MFPackager extends JFrame {
             cancelRequested = true;
             appendStatus("正在取消打包操作...");
             cancelButton.setEnabled(false);
-
-            if (packingThread != null && packingThread.isAlive()) {
-                packingThread.interrupt();
-            }
         });
 
         panel.add(startButton);
@@ -216,133 +201,163 @@ public class MFPackager extends JFrame {
         startButton.setEnabled(false);
         cancelButton.setEnabled(true);
 
-        packingThread = new Thread(() -> {
-            try {
-                SwingUtilities.invokeAndWait(() -> {
-                    appendStatus("========== 正在创建工作目录 ==========");
-                    dirCreated = MFPFileManager.createWorkingDirectory(targetPath, instrument);
-                    if (!dirCreated) {
-                        MFPackager.interruptPackingThread();
-                    }
-                    appendStatus("完成!");
-                });
+        PackingWorker worker = new PackingWorker(assetsPath, targetPath, version, instrument, finalZipFileName);
+        worker.execute();
+    }
 
-                SwingUtilities.invokeLater(() -> {
-                    appendStatus("========== 正在收集所需信息 ==========");
-                    infoCollected = MFPFileManager.calculateSubInsInformation(assetsPath);
-                    if (!infoCollected) {
-                        MFPackager.interruptPackingThread();
-                    }
-                    appendStatus("完成!");
-                });
+    private class PackingWorker extends SwingWorker<Void, String> {
+        private final String assetsPath;
+        private final String targetPath;
+        private final String version;
+        private final String instrument;
+        private final String finalZipFileName;
+        private String actualZipFilePath = null;
 
-                SwingUtilities.invokeLater(() -> {
-                    appendStatus("========== 正在复制目标声音文件到工作目录 ==========");
-                    soundsCopied = MFPFileManager.copySoundsToTarget(assetsPath);
-                    if (!soundsCopied) {
-                        MFPackager.interruptPackingThread();
-                    }
-                    appendStatus("完成!");
-                });
+        private boolean jsonCreated = false;
 
-                SwingUtilities.invokeAndWait(() -> {
-                    appendStatus("========== 正在处理META信息 ==========");
-                    metaCreated = MFPJsonManager.createMeta(targetPath, version);
-                    if (!metaCreated) {
-                        MFPackager.interruptPackingThread();
-                    }
-                    appendStatus("完成!");
+        public PackingWorker(String assetsPath, String targetPath, String version,
+                             String instrument, String finalZipFileName) {
+            this.assetsPath = assetsPath;
+            this.targetPath = targetPath;
+            this.version = version;
+            this.instrument = instrument;
+            this.finalZipFileName = finalZipFileName;
+        }
 
-                });
+        @Override
+        protected Void doInBackground() {
+            publish("========== 正在创建工作目录 ==========");
+            boolean dirCreated = MFPFileManager.createWorkingDirectory(targetPath, instrument);
+            if (!dirCreated) return null;
+            publish("完成!");
 
-                SwingUtilities.invokeLater(() -> {
-                    appendStatus("========== 正在生成模组JSON文件 ==========");
-                    for (String subIns : MFPFileManager.getAllSubInstrument()) {
-                        jsonCreated = MFPJsonManager.createModJson(targetPath, subIns);
-                    }
-                    if (!jsonCreated) {
-                        MFPackager.interruptPackingThread();
-                    }
-                    appendStatus("完成!");
+            if (cancelRequested) return null;
 
-                });
+            publish("========== 正在收集所需信息 ==========");
+            boolean infoCollected = MFPFileManager.calculateSubInsInformation(assetsPath);
+            if (!infoCollected) return null;
+            publish("完成!");
 
-                String zipFileName = MFPZipper.generateZipFileName(finalZipFileName);
-                String zipFilePath = MFPZipper.buildZipFilePath(targetPath, zipFileName);
+            if (cancelRequested) return null;
 
-                String packSourcePath = targetPath + (targetPath.endsWith(File.separator) ? "generated" : "\\generated");
+            publish("========== 正在复制目标声音文件到工作目录 ==========");
+            boolean soundsCopied = MFPFileManager.copySoundsToTarget(assetsPath);
+            if (!soundsCopied) return null;
+            publish("完成!");
 
-                SwingUtilities.invokeLater(() -> {
-                    appendStatus("========== 开始打包任务 ==========");
-                    appendStatus("Assets路径: " + assetsPath);
-                    appendStatus("Target路径: " + targetPath);
-                    appendStatus("输出文件: " + zipFileName);
-                    appendStatus("Minecraft版本: " + versionComboBox.getSelectedItem());
-                    appendStatus("主乐器: " + mainInsComboBox.getSelectedItem());
+            if (cancelRequested) return null;
 
-                    StringBuilder instruments = new StringBuilder();
-                    for (int i = 0; i < MFPFileManager.getAllSubInstrument().size(); i++) {
-                        if (i > 0) instruments.append(", ");
-                        instruments.append(MFPFileManager.getAllSubInstrument().stream().toList().get(i));
-                    }
-                    appendStatus("子乐器: " + instruments);
-                    appendStatus("=================================");
-                });
+            publish("========== 正在处理META信息 ==========");
+            boolean metaCreated = MFPJsonManager.createMeta(targetPath, version);
+            if (!metaCreated) return null;
+            publish("完成!");
 
-                MFPZipper.PackResult result = MFPZipper.packToZip(
-                        packSourcePath,
-                        zipFilePath,
-                        (filePath) -> SwingUtilities.invokeLater(() -> appendStatus("打包中: " + filePath)),
-                        () -> cancelRequested
-                );
+            if (cancelRequested) return null;
 
-                SwingUtilities.invokeLater(() -> {
-                    if (result.isSuccess()) {
-                        appendStatus("已完成: " + result.message());
-                        appendStatus("文件大小: " + MFPZipper.getFormattedFileSize(result.zipFilePath()));
-                        appendStatus("文件位置: " + result.zipFilePath());
-                        appendStatus("=================================");
-
-                        int option = JOptionPane.showConfirmDialog(this,
-                                String.format("打包完成！\n文件大小: %s\n\n是否打开目标文件夹？",
-                                        MFPZipper.getFormattedFileSize(result.zipFilePath())),
-                                "打包完成",
-                                JOptionPane.YES_NO_OPTION);
-                        if (option == JOptionPane.YES_OPTION) {
-                            try {
-                                Desktop.getDesktop().open(new File(targetPath));
-                            } catch (IOException ex) {
-                                appendStatus("无法打开文件夹: " + ex.getMessage());
-                            }
-                        }
-                    } else {
-                        appendStatus("打包失败: " + result.message());
-                        appendStatus("=================================");
-                        JOptionPane.showMessageDialog(this,
-                                "打包失败: " + result.message(),
-                                "错误",
-                                JOptionPane.ERROR_MESSAGE);
-                    }
-                });
-
-            } catch (Exception ex) {
-                SwingUtilities.invokeLater(() -> {
-                    appendStatus("发生错误: " + ex.getMessage());
-                    appendStatus("=================================");
-                    JOptionPane.showMessageDialog(this,
-                            "发生错误: " + ex.getMessage(),
-                            "错误",
-                            JOptionPane.ERROR_MESSAGE);
-                });
-            } finally {
-                SwingUtilities.invokeLater(() -> {
-                    startButton.setEnabled(true);
-                    cancelButton.setEnabled(false);
-                });
+            publish("========== 正在生成模组JSON文件 ==========");
+            for (String subIns : MFPFileManager.getAllSubInstrument()) {
+                jsonCreated = MFPJsonManager.createModJson(targetPath, subIns);
+                if (!jsonCreated) break;
             }
-        });
+            if (!jsonCreated) return null;
+            publish("完成!");
 
-        packingThread.start();
+            if (cancelRequested) return null;
+
+            StringBuilder instruments = new StringBuilder();
+            for (int i = 0; i < MFPFileManager.getAllSubInstrument().size(); i++) {
+                if (i > 0) instruments.append(", ");
+                instruments.append(MFPFileManager.getAllSubInstrument().stream().toList().get(i));
+            }
+            publish("========== 开始打包任务 ==========");
+            publish("Assets路径: " + assetsPath);
+            publish("Target路径: " + targetPath);
+            publish("输出文件: " + MFPZipper.generateZipFileName(finalZipFileName));
+            publish("Minecraft版本: " + version);
+            publish("主乐器: " + instrument);
+            publish("子乐器: " + instruments);
+            publish("=================================");
+
+            String zipFileName = MFPZipper.generateZipFileName(finalZipFileName);
+            actualZipFilePath = MFPZipper.buildZipFilePath(targetPath, zipFileName);
+            String packSourcePath = targetPath + (targetPath.endsWith(File.separator) ? "generated" : "\\generated");
+
+            MFPZipper.PackResult result = MFPZipper.packToZip(
+                    packSourcePath, actualZipFilePath,
+                    (filePath) -> publish("打包中: " + filePath),
+                    () -> cancelRequested
+            );
+
+            if (cancelRequested) {
+                return null;
+            }
+
+            if (result.isSuccess()) {
+                publish("已完成: " + result.message());
+                publish("文件大小: " + MFPZipper.getFormattedFileSize(result.zipFilePath()));
+                publish("文件位置: " + result.zipFilePath());
+                publish("=================================");
+            } else {
+                publish("打包失败: " + result.message());
+                publish("=================================");
+            }
+
+            return null;
+        }
+
+        @Override
+        protected void process(List<String> chunks) {
+            for (String message : chunks) {
+                appendStatus(message);
+            }
+        }
+
+        @Override
+        protected void done() {
+            startButton.setEnabled(true);
+            cancelButton.setEnabled(false);
+
+            try {
+                get();
+            } catch (Exception e) {
+                appendStatus("发生错误: " + e.getCause().getMessage());
+                JOptionPane.showMessageDialog(MFPackager.this,
+                        "发生错误: " + e.getCause().getMessage(),
+                        "错误", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+
+            if (cancelRequested) {
+                appendStatus("打包操作已取消");
+                cancelRequested = false;
+                JOptionPane.showMessageDialog(MFPackager.this,
+                        "打包操作已取消",
+                        "信息", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+
+            if (actualZipFilePath != null) {
+                File zipFile = new File(actualZipFilePath);
+                if (zipFile.exists() && !cancelRequested) {
+                    int option = JOptionPane.showConfirmDialog(MFPackager.this,
+                            String.format("打包完成！\n文件大小: %s\n\n是否打开目标文件夹？",
+                                    MFPZipper.getFormattedFileSize(actualZipFilePath)),
+                            "打包完成", JOptionPane.YES_NO_OPTION);
+                    if (option == JOptionPane.YES_OPTION) {
+                        try {
+                            Desktop.getDesktop().open(new File(targetField.getText().trim()));
+                        } catch (IOException ex) {
+                            appendStatus("无法打开文件夹: " + ex.getMessage());
+                        }
+                    }
+                } else {
+                    JOptionPane.showMessageDialog(MFPackager.this,
+                            "打包失败，请检查上方状态信息",
+                            "错误", JOptionPane.ERROR_MESSAGE);
+                }
+            }
+            cancelRequested = false;
+        }
     }
 
     private void appendStatus(String message) {

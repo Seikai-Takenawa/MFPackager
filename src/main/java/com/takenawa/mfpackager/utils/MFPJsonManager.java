@@ -26,6 +26,8 @@ public class MFPJsonManager {
             JsonObject metaJson = new JsonObject();
             metaJson.addProperty("description", description);
             metaJson.addProperty("pack_format", format);
+            metaJson.addProperty("min_format", format);
+            metaJson.addProperty("max_format", format);
 
             JsonObject rootJson = new JsonObject();
             rootJson.add("pack", metaJson);
