@@ -41,7 +41,7 @@ public class MFPJsonManager {
 
     public static boolean createModJson(String targetPath, String subIns) {
         try {
-            Path target = Path.of(targetPath).getParent().resolve(subIns + ".json");
+            Path target = Path.of(targetPath).resolve(subIns + ".json");
             int minOctave = MFPFileManager.getSubInsMinOctave(subIns);
             int maxOctave = MFPFileManager.getSubInsMaxOctave(subIns);
 
