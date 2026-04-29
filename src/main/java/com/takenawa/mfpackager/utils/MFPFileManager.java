@@ -3,13 +3,11 @@ package com.takenawa.mfpackager.utils;
 import com.takenawa.mfpackager.MFPackager;
 
 import javax.swing.*;
+import java.awt.*;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.*;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.stream.Stream;
 
 public class MFPFileManager {
@@ -38,24 +36,73 @@ public class MFPFileManager {
         return true;
     }
 
-    public static boolean copySoundsToTarget(String sourcePath) {
+    public static boolean isTargetPathAssetSubPath(String assetPath, String targetPath) {
+        Path parentPath = Path.of(assetPath);
+        Path childPath = Path.of(targetPath);
+        try {
+            Path parent = parentPath.toRealPath();
+            Path child = childPath.toRealPath();
+            return child.startsWith(parent);
+        } catch (IOException e) {
+            Path parent = parentPath.normalize();
+            Path child = childPath.normalize();
+            return child.startsWith(parent);
+        }
+    }
+
+    public static boolean copySoundsToTarget(String sourcePath, boolean onlyTop) {
         Path sourceDir = Path.of(sourcePath);
+
+        boolean hasSubDirectory;
+        try (Stream<Path> list = Files.list(sourceDir)) {
+            hasSubDirectory = list.anyMatch(Files::isDirectory);
+        } catch (IOException e) {
+            return false;
+        }
+        if (!onlyTop && !hasSubDirectory) {
+            JOptionPane.showMessageDialog(MFPackager.getInstance(), "源目录中没有子目录!", "自定义乐器打包错误", JOptionPane.ERROR_MESSAGE);
+            return false;
+        } else if (onlyTop && hasSubDirectory) {
+            JOptionPane.showMessageDialog(MFPackager.getInstance(), "源目录中有目录! \n请直接定位到存放ogg文件的目录下", "模组乐器打包错误", JOptionPane.ERROR_MESSAGE);
+            return false;
+        }
+
+
         try (Stream<Path> stream = Files.walk(sourceDir)) {
             stream.forEach(soundsSource -> {
                 Path targetDir = soundSourceTargetPath.resolve(sourceDir.relativize(soundsSource));
-                if (Files.isDirectory(soundsSource)) {
-                    if (!Files.exists(targetDir)) {
+
+                if (onlyTop) {
+                    if (!Files.isDirectory(soundsSource)) {
                         try {
-                            Files.createDirectories(targetDir);
+                            Path parent = targetDir.getParent();
+                            if (parent != null && !Files.exists(parent)) {
+                                Files.createDirectories(parent);
+                            }
+                            Files.copy(soundsSource, targetDir, StandardCopyOption.REPLACE_EXISTING);
                         } catch (IOException e) {
                             throw new RuntimeException(e);
                         }
                     }
                 } else {
-                    try {
-                        Files.copy(soundsSource, targetDir, StandardCopyOption.REPLACE_EXISTING);
-                    } catch (IOException e) {
-                        throw new RuntimeException(e);
+                    if (Files.isDirectory(soundsSource)) {
+                        if (!Files.exists(targetDir)) {
+                            try {
+                                Files.createDirectories(targetDir);
+                            } catch (IOException e) {
+                                throw new RuntimeException(e);
+                            }
+                        }
+                    } else {
+                        try {
+                            Path parent = targetDir.getParent();
+                            if (parent != null && !Files.exists(parent)) {
+                                Files.createDirectories(parent);
+                            }
+                            Files.copy(soundsSource, targetDir, StandardCopyOption.REPLACE_EXISTING);
+                        } catch (IOException e) {
+                            throw new RuntimeException(e);
+                        }
                     }
                 }
             });
@@ -63,6 +110,44 @@ public class MFPFileManager {
             return false;
         }
         return true;
+    }
+
+    public static boolean cleanGeneratedDirectory(String targetPath) {
+        Component component = MFPackager.getInstance();
+        if (targetPath == null || targetPath.trim().isEmpty()) {
+            System.err.println("目标路径为空，无法清空临时文件夹");
+            return false;
+        }
+
+        String generatedPath = targetPath + (targetPath.endsWith(File.separator) ? "generated" : "\\generated");
+        File generatedDir = new File(generatedPath);
+
+        if (!generatedDir.exists()) {
+            return true;
+        }
+
+        if (!generatedDir.isDirectory()) {
+            System.err.println("路径不是目录: " + generatedPath);
+            return false;
+        }
+
+        try (Stream<Path> stream = Files.walk(generatedDir.toPath())) {
+            stream.sorted(Comparator.reverseOrder()).map(Path::toFile).forEach(file -> {
+                if (!file.delete()) {
+                    JOptionPane.showMessageDialog(component, "无法删除: " + file.getAbsolutePath());
+                }
+            });
+
+            if (generatedDir.exists()) {
+                JOptionPane.showMessageDialog(component, "清空后文件夹仍存在，可能部分文件未删除!");
+                return false;
+            }
+
+            return true;
+        } catch (IOException e) {
+            JOptionPane.showMessageDialog(component, "清空临时文件夹失败: " + e.getMessage());
+            return false;
+        }
     }
 
     public static boolean calculateSubInsInformation(String sourcePath) {
@@ -92,7 +177,7 @@ public class MFPFileManager {
                 maxOctave = 1;
             }
             if (mainFolderNull) {
-                JOptionPane.showMessageDialog(MFPackager.getInstance(), "源目录中没有子目录", "错误", JOptionPane.ERROR_MESSAGE);
+                JOptionPane.showMessageDialog(MFPackager.getInstance(), "源目录中没有子目录!", "自定义乐器打包错误", JOptionPane.ERROR_MESSAGE);
                 return false;
             }
         } catch (IOException e) {

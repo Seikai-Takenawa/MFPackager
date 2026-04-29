@@ -13,6 +13,7 @@ import java.util.List;
 
 public class MFPackager extends JFrame {
     private static MFPackager instance;
+    private static final String version = " - v1.0.2";
     private static final String[] VERSIONS = {"1.21.5", "1.21.6", "1.21.7", "1.21.8", "1.21.10", "1.21.11"};
 
     private JTextField assetsField, targetField;
@@ -31,7 +32,7 @@ public class MFPackager extends JFrame {
     }
 
     private MFPackager() {
-        setTitle("Mine Fantasia Packager");
+        setTitle("Mine Fantasia Packager" + version);
         setSize(600, 650);
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setLocationRelativeTo(null);
@@ -125,7 +126,7 @@ public class MFPackager extends JFrame {
         gbc.gridy = row;
         gbc.gridwidth = 2;
         gbc.weightx = 1;
-        mainInsComboBox = new JComboBox<>(new String[]{"custom_synth"});
+        mainInsComboBox = new JComboBox<>(new String[]{"custom_synth", "piano", "violin", "harp", "flute", "kalimba", "middle_age_synth", "happy_day_synth", "flute_synth"});
         panel.add(mainInsComboBox, gbc);
 
         return panel;
@@ -197,6 +198,12 @@ public class MFPackager extends JFrame {
             return;
         }
 
+        if (MFPFileManager.isTargetPathAssetSubPath(assetsPath, targetPath)) {
+            appendStatus("错误: 目标路径需与源路径不同且不位于源路径的子目录下!");
+            JOptionPane.showMessageDialog(this, "目标路径需与源路径不同且不位于源路径的子目录下!", "错误", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+
         cancelRequested = false;
         startButton.setEnabled(false);
         cancelButton.setEnabled(true);
@@ -211,9 +218,10 @@ public class MFPackager extends JFrame {
         private final String version;
         private final String instrument;
         private final String finalZipFileName;
+        private final boolean isCustom;
         private String actualZipFilePath = null;
 
-        private boolean jsonCreated = false;
+        private boolean jsonCreated = true;
 
         public PackingWorker(String assetsPath, String targetPath, String version,
                              String instrument, String finalZipFileName) {
@@ -222,47 +230,92 @@ public class MFPackager extends JFrame {
             this.version = version;
             this.instrument = instrument;
             this.finalZipFileName = finalZipFileName;
+            this.isCustom = instrument.contains("custom");
         }
 
         @Override
         protected Void doInBackground() {
             publish("========== 正在创建工作目录 ==========");
             boolean dirCreated = MFPFileManager.createWorkingDirectory(targetPath, instrument);
-            if (!dirCreated) return null;
+            if (!dirCreated) {
+                publish("意外中止");
+                return null;
+            }
             publish("完成!");
 
-            if (cancelRequested) return null;
+            if (cancelRequested) {
+                MFPFileManager.cleanGeneratedDirectory(targetPath);
+                return null;
+            }
 
             publish("========== 正在收集所需信息 ==========");
-            boolean infoCollected = MFPFileManager.calculateSubInsInformation(assetsPath);
-            if (!infoCollected) return null;
+            boolean infoCollected = true;
+            if (isCustom) {
+                infoCollected = MFPFileManager.calculateSubInsInformation(assetsPath);
+            }
+            if (!infoCollected) {
+                publish("意外中止");
+                MFPFileManager.cleanGeneratedDirectory(targetPath);
+                return null;
+            }
             publish("完成!");
 
-            if (cancelRequested) return null;
+            if (cancelRequested) {
+                MFPFileManager.cleanGeneratedDirectory(targetPath);
+                return null;
+            }
 
             publish("========== 正在复制目标声音文件到工作目录 ==========");
-            boolean soundsCopied = MFPFileManager.copySoundsToTarget(assetsPath);
-            if (!soundsCopied) return null;
+            boolean soundsCopied;
+            if (!isCustom) {
+                soundsCopied = MFPFileManager.copySoundsToTarget(assetsPath, true);
+            } else {
+                soundsCopied = MFPFileManager.copySoundsToTarget(assetsPath, false);
+            }
+            if (!soundsCopied) {
+                publish("意外中止");
+                MFPFileManager.cleanGeneratedDirectory(targetPath);
+                return null;
+            }
             publish("完成!");
 
-            if (cancelRequested) return null;
+            if (cancelRequested) {
+                MFPFileManager.cleanGeneratedDirectory(targetPath);
+                return null;
+            }
 
             publish("========== 正在处理META信息 ==========");
             boolean metaCreated = MFPJsonManager.createMeta(targetPath, version);
-            if (!metaCreated) return null;
+            if (!metaCreated) {
+                publish("意外中止");
+                MFPFileManager.cleanGeneratedDirectory(targetPath);
+                return null;
+            }
             publish("完成!");
 
-            if (cancelRequested) return null;
+            if (cancelRequested) {
+                MFPFileManager.cleanGeneratedDirectory(targetPath);
+                return null;
+            }
 
             publish("========== 正在生成模组JSON文件 ==========");
-            for (String subIns : MFPFileManager.getAllSubInstrument()) {
-                jsonCreated = MFPJsonManager.createModJson(targetPath, subIns);
-                if (!jsonCreated) break;
+            if (isCustom) {
+                for (String subIns : MFPFileManager.getAllSubInstrument()) {
+                    jsonCreated = MFPJsonManager.createModJson(targetPath, subIns);
+                    if (!jsonCreated) break;
+                }
             }
-            if (!jsonCreated) return null;
+            if (!jsonCreated) {
+                publish("意外中止");
+                MFPFileManager.cleanGeneratedDirectory(targetPath);
+                return null;
+            }
             publish("完成!");
 
-            if (cancelRequested) return null;
+            if (cancelRequested) {
+                MFPFileManager.cleanGeneratedDirectory(targetPath);
+                return null;
+            }
 
             StringBuilder instruments = new StringBuilder();
             for (int i = 0; i < MFPFileManager.getAllSubInstrument().size(); i++) {
@@ -275,7 +328,9 @@ public class MFPackager extends JFrame {
             publish("输出文件: " + MFPZipper.generateZipFileName(finalZipFileName));
             publish("Minecraft版本: " + version);
             publish("主乐器: " + instrument);
-            publish("子乐器: " + instruments);
+            if (isCustom) {
+                publish("子乐器: " + instruments);
+            }
             publish("=================================");
 
             String zipFileName = MFPZipper.generateZipFileName(finalZipFileName);
@@ -289,6 +344,7 @@ public class MFPackager extends JFrame {
             );
 
             if (cancelRequested) {
+                MFPFileManager.cleanGeneratedDirectory(targetPath);
                 return null;
             }
 
@@ -339,6 +395,8 @@ public class MFPackager extends JFrame {
             if (actualZipFilePath != null) {
                 File zipFile = new File(actualZipFilePath);
                 if (zipFile.exists() && !cancelRequested) {
+                    boolean deletedWorkingDir = MFPFileManager.cleanGeneratedDirectory(targetPath);
+
                     int option = JOptionPane.showConfirmDialog(MFPackager.this,
                             String.format("打包完成！\n文件大小: %s\n\n是否打开目标文件夹？",
                                     MFPZipper.getFormattedFileSize(actualZipFilePath)),
@@ -349,6 +407,9 @@ public class MFPackager extends JFrame {
                         } catch (IOException ex) {
                             appendStatus("无法打开文件夹: " + ex.getMessage());
                         }
+                    }
+                    if (!deletedWorkingDir) {
+                        JOptionPane.showMessageDialog(MFPackager.this, "工作文件未能成功删除，请手动删除！", "警告", JOptionPane.WARNING_MESSAGE);
                     }
                 } else {
                     JOptionPane.showMessageDialog(MFPackager.this,
